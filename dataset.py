@@ -35,4 +35,4 @@ class CROHMEDataset(Dataset):
             dtype=torch.long
         )
 
-        return img, tgt
+        return img, tgt, img_path
