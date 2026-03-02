@@ -1,3 +1,7 @@
+import json
+import os
+from datetime import datetime
+
 import torch
 from tqdm import tqdm
 
@@ -19,9 +23,9 @@ def levenshtein(a, b):
         for j in range(1, m + 1):
             cost = 0 if a[i - 1] == b[j - 1] else 1
             dp[i][j] = min(
-                dp[i - 1][j] + 1,      # deletion
-                dp[i][j - 1] + 1,      # insertion
-                dp[i - 1][j - 1] + cost  # substitution
+                dp[i - 1][j] + 1,
+                dp[i][j - 1] + 1,
+                dp[i - 1][j - 1] + cost
             )
     return dp[n][m]
 
@@ -34,6 +38,7 @@ def evaluate(
     device,
     decode_fn,
     max_len=150,
+    anomaly_log_path="logs/val_anomaly_samples.jsonl",
 ):
     model.eval()
 
@@ -42,47 +47,93 @@ def evaluate(
     total_edit_distance = 0
     total_ref_len = 0
 
-    for images, gt_ids in tqdm(dataloader, desc="Evaluating"):
+    skipped_batches = 0
+    os.makedirs(os.path.dirname(anomaly_log_path), exist_ok=True)
 
-        images = images.to(device)
-        gt_ids = gt_ids.to(device)
+    with open(anomaly_log_path, "a", encoding="utf-8") as log_f:
+        for batch_idx, (images, gt_ids, sample_paths) in enumerate(
+            tqdm(dataloader, desc="Evaluating")
+        ):
 
-        batch_size = images.size(0)
+            images = images.to(device)
+            gt_ids = gt_ids.to(device)
 
-        for i in range(batch_size):
+            tf_logits = model(images, gt_ids[:, :-1])
+            invalid_mask = torch.isnan(tf_logits) | torch.isinf(tf_logits)
+            if invalid_mask.any():
+                skipped_batches += 1
+                anomaly_record = {
+                    "time": datetime.now().isoformat(),
+                    "type": "invalid_logits",
+                    "batch_idx": batch_idx,
+                    "sample_paths": list(sample_paths),
+                }
+                log_f.write(json.dumps(anomaly_record, ensure_ascii=False) + "\n")
+                print(
+                    f"[WARN] Skip batch {batch_idx}: NaN/Inf logits detected. "
+                    f"Samples={list(sample_paths)}"
+                )
+                continue
 
-            single_image = images[i:i+1]  # 更安全写法
+            batch_size = images.size(0)
 
-            pred_str = decode_fn(
-                model,
-                single_image,
-                tokenizer
-            )
+            for i in range(batch_size):
 
-            gt_str = tokenizer.decode(gt_ids[i].tolist())
+                single_image = images[i:i + 1]
+                pred_str, pred_ids = decode_fn(
+                    model,
+                    single_image,
+                    tokenizer,
+                    max_len=max_len,
+                    return_ids=True,
+                )
 
-            pred_str = pred_str.strip()
-            gt_str = gt_str.strip()[1:-1]
+                gt_token_ids = gt_ids[i].tolist()
+                gt_str = tokenizer.decode(gt_token_ids)
 
-            if total < 5:
-                print("\nGT  :", gt_str)
-                print("PRED:", pred_str)
-                print("-" * 40)
+                pred_str = pred_str.strip()
+                gt_str = gt_str.strip()[1:-1]
 
-            if pred_str == gt_str:
-                exact_match += 1
+                if total < 5:
+                    print("\nGT  :", gt_str)
+                    print("PRED:", pred_str)
+                    print("-" * 40)
 
-            pred_tokens = tokenizer.tokenize(pred_str)
-            gt_tokens = tokenizer.tokenize(gt_str)
+                if pred_str == gt_str:
+                    exact_match += 1
 
-            ed = levenshtein(pred_tokens, gt_tokens)
+                pred_tokens = tokenizer.tokenize(pred_str)
+                gt_tokens = tokenizer.tokenize(gt_str)
 
-            total_edit_distance += ed
-            total_ref_len += len(gt_tokens)
-            total += 1
+                ed = levenshtein(pred_tokens, gt_tokens)
+
+                total_edit_distance += ed
+                total_ref_len += len(gt_tokens)
+                total += 1
+
+                sample_record = {
+                    "time": datetime.now().isoformat(),
+                    "type": "decode_sample",
+                    "batch_idx": batch_idx,
+                    "sample_path": sample_paths[i],
+                    "gt_token_ids": gt_token_ids,
+                    "pred_token_ids": pred_ids,
+                    "gt_text": gt_str,
+                    "pred_text": pred_str,
+                }
+                log_f.write(json.dumps(sample_record, ensure_ascii=False) + "\n")
+
+    if total == 0:
+        return {
+            "ExactMatch": 0.0,
+            "AvgEditDistance": 0.0,
+            "NormEditDistance": 0.0,
+            "SkippedBatches": skipped_batches,
+        }
 
     return {
         "ExactMatch": exact_match / total,
         "AvgEditDistance": total_edit_distance / total,
-        "NormEditDistance": total_edit_distance / total_ref_len
+        "NormEditDistance": total_edit_distance / max(total_ref_len, 1),
+        "SkippedBatches": skipped_batches,
     }

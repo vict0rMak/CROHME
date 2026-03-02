@@ -20,6 +20,17 @@ tokenizer.build_vocab([
 ])
 tokenizer.save_vocab("vocab.json")
 
+tokenizer_check = LatexTokenizer()
+tokenizer_check.load_vocab("vocab.json")
+
+special_tokens = ["<SOS>", "<EOS>", "<PAD>", "<UNK>"]
+print("Special token id check (train tokenizer vs vocab file):")
+for tok in special_tokens:
+    train_id = tokenizer.token2id[tok]
+    file_id = tokenizer_check.token2id[tok]
+    print(f"  {tok}: train={train_id}, vocab_file={file_id}")
+    assert train_id == file_id, f"Special token id mismatch for {tok}"
+
 # ===============================
 # 2️⃣ Dataset
 # ===============================
@@ -68,7 +79,7 @@ for epoch in range(num_epochs):
     total_loss = 0
     correct, total = 0, 0
 
-    for img, tgt in tqdm(train_loader, desc="Training"):
+    for img, tgt, _ in tqdm(train_loader, desc="Training"):
         img, tgt = img.to(device), tgt.to(device)
 
         out = model(img, tgt[:, :-1])
@@ -115,6 +126,7 @@ for epoch in range(num_epochs):
 
     print(f"Val EM: {val_em:.4f}")
     print(f"Val NormED: {val_norm_ed:.4f}")
+    print(f"Val SkippedBatches: {metrics.get('SkippedBatches', 0)}")
 
     # ===============================
     # 6️⃣ Early Stopping
