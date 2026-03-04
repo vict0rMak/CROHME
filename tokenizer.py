@@ -95,8 +95,6 @@ class LatexTokenizer:
             r"\Phi", r"\Chi", r"\Psi", r"\Omega",
             # Hebrew letters
             r"\aleph", r"\beth", r"\gimel", r"\daleth",
-            # Operators
-            "+", "-", "*", "/", "=",
             r"\cdot", r"\times",
         ]
 
@@ -105,6 +103,7 @@ class LatexTokenizer:
 
         self.token2id = {}
         self.id2token = {}
+        self._sorted_latex_tokens = sorted(set(self.latex_tokens), key=len, reverse=True)
 
     def build_vocab(self, json_paths):
         vocab = set(self.latex_tokens + self.char_tokens)
@@ -124,7 +123,7 @@ class LatexTokenizer:
         i = 0
         while i < len(latex):
             matched = False
-            for tok in sorted(self.latex_tokens, key=len, reverse=True):
+            for tok in self._sorted_latex_tokens:
                 if latex.startswith(tok, i):
                     tokens.append(tok)
                     i += len(tok)
@@ -139,6 +138,8 @@ class LatexTokenizer:
         tokens = ["<SOS>"] + self.tokenize(latex) + ["<EOS>"]
         ids = [self.token2id.get(t, self.token2id["<UNK>"]) for t in tokens]
         ids = ids[:max_len]
+        if ids and ids[-1] != self.token2id["<EOS>"]:
+            ids[-1] = self.token2id["<EOS>"]
         ids += [self.token2id["<PAD>"]] * (max_len - len(ids))
         return ids
 
