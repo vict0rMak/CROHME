@@ -62,7 +62,7 @@ def evaluate(
             gt_str = tokenizer.decode(gt_ids[i].tolist())
 
             pred_str = pred_str.strip()
-            gt_str = gt_str.strip()[1:-1]
+            gt_str = gt_str.strip()
 
             if total < 5:
                 print("\nGT  :", gt_str)
@@ -78,7 +78,7 @@ def evaluate(
             ed = levenshtein(pred_tokens, gt_tokens)
 
             total_edit_distance += ed
-            total_ref_len += len(gt_tokens)
+            total_ref_len += max(1, len(gt_tokens))
             total += 1
 
     return {
